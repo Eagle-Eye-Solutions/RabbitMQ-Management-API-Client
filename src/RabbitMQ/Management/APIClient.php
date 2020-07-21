@@ -3,7 +3,8 @@
 namespace RabbitMQ\Management;
 
 use Doctrine\Common\Collections\ArrayCollection;
-use Guzzle\Http\Exception\RequestException;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
 use RabbitMQ\Management\Entity\Binding;
 use RabbitMQ\Management\Entity\Channel;
 use RabbitMQ\Management\Entity\Exchange;
@@ -22,15 +23,12 @@ class APIClient
      */
     private $client;
     private $hydrator;
+    private $config;
 
-    public static function factory(array $options = array())
-    {
-        return new self(HttpClient::factory($options));
-    }
-
-    public function __construct(HttpClient $client)
+    public function __construct(Client $client, array $config)
     {
         $this->client = $client;
+        $this->config = $config;
         $this->hydrator = new Hydrator();
     }
 
@@ -49,7 +47,7 @@ class APIClient
     public function deleteConnection($name)
     {
         try {
-            $this->client->delete(sprintf('/api/connections/%s', urlencode($name)))->send();
+            $this->client->delete(sprintf('/api/connections/%s', urlencode($name)));
         } catch (RequestException $e) {
             throw new RuntimeException('Failed to delete connection', $e->getCode(), $e);
         }
@@ -108,7 +106,7 @@ class APIClient
         $uri = sprintf('/api/exchanges/%s/%s', urlencode($vhost), urlencode($name));
 
         try {
-            $this->client->delete($uri)->send();
+            $this->client->delete($uri);
         } catch (RequestException $e) {
             throw new RuntimeException('Unable to delete exchange', $e->getCode(), $e);
         }
@@ -136,7 +134,12 @@ class APIClient
         $uri = sprintf('/api/exchanges/%s/%s', urlencode($exchange->vhost), urlencode($exchange->name));
 
         try {
-            $response = $this->client->put($uri, array('Content-Type' => 'application/json'), $exchange->toJson())->send();
+            $response = $this->client->put($uri, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => $exchange->toJson(),
+            ]);
         } catch (RequestException $e) {
             if ($data = json_decode($e->getResponse()->getBody(true), true)) {
                 if (isset($data['reason']) && strpos($data['reason'], '406 PRECONDITION_FAILED') === 0) {
@@ -187,7 +190,12 @@ class APIClient
         $uri = sprintf('/api/queues/%s/%s', urlencode($queue->vhost), urlencode($queue->name));
 
         try {
-            $this->client->put($uri, array('Content-type' => 'application/json'), $queue->toJson())->send();
+            $this->client->put($uri, [
+                'headers' => [
+                    'Content-type' => 'application/json',
+                ],
+                'body' => $queue->toJson(),
+            ]);
         } catch (RequestException $e) {
             if ($data = json_decode($e->getResponse()->getBody(true), true)) {
                 if (isset($data['reason']) && strpos($data['reason'], '406 PRECONDITION_FAILED') === 0) {
@@ -213,7 +221,7 @@ class APIClient
         try {
             $this->client->delete(
                 sprintf('/api/queues/%s/%s', urlencode($vhost), urlencode($name))
-            )->send();
+            );
         } catch (RequestException $e) {
             throw new RuntimeException('Unable to delete queue', $e->getCode(), $e);
         }
@@ -234,7 +242,7 @@ class APIClient
         try {
             $this->client->delete(
                 sprintf('/api/queues/%s/%s/contents', urlencode($vhost), urlencode($name))
-            )->send();
+            );
         } catch (RequestException $e) {
             throw new RuntimeException('Unable to purge queue', $e->getCode(), $e);
         }
@@ -261,7 +269,12 @@ class APIClient
         $uri = sprintf('/api/bindings/%s/e/%s/q/%s', urlencode($binding->vhost), urlencode($binding->source), urlencode($binding->destination));
 
         try {
-            $this->client->post($uri, array('Content-type' => 'application/json'), $binding->toJson())->send();
+            $this->client->post($uri, [
+                'headers' => [
+                    'Content-type' => 'application/json',
+                ],
+                'body' => $binding->toJson(),
+            ]);
         } catch (RequestException $e) {
             throw new RuntimeException('Unable to add binding', $e->getCode(), $e);
         }
@@ -274,7 +287,7 @@ class APIClient
         $uri = sprintf('/api/bindings/%s/e/%s/q/%s/%s', urlencode($vhost), urlencode($exchange), urlencode($queue), urlencode($binding->properties_key));
 
         try {
-            $this->client->delete($uri)->send();
+            $this->client->delete($uri);
         } catch (RequestException $e) {
             throw new RuntimeException('Unable to delete binding', $e->getCode(), $e);
         }
@@ -296,8 +309,8 @@ class APIClient
     public function alivenessTest($vhost)
     {
         try {
-            $res = $this->client->get(sprintf('/api/aliveness-test/%s', urlencode($vhost)))->send()->getBody(true);
-            $data = json_decode($res, true);
+            $response = $this->client->get(sprintf('/api/aliveness-test/%s', urlencode($vhost)));
+            $data = json_decode((string)$response->getBody(), true);
 
             if (!isset($data['status']) || $data['status'] !== 'ok') {
                 return false;
@@ -314,7 +327,7 @@ class APIClient
     private function retrieveEntity($uri, $targetEntity, EntityInterface $entity = null)
     {
         try {
-            $res = $this->client->get($uri)->send()->getBody(true);
+            $response = $this->client->get($uri);
         } catch (RequestException $e) {
             if ($e->getResponse()->getStatusCode() === 404) {
                 throw new EntityNotFoundException('Entity not found', $e->getCode(), $e);
@@ -327,18 +340,18 @@ class APIClient
             $entity = new $targetEntity();
         }
 
-        return $this->hydrator->hydrate($entity, json_decode($res, true));
+        return $this->hydrator->hydrate($entity, json_decode((string)$response->getBody(), true));
     }
 
     private function retrieveCollection($uri, $targetEntity)
     {
         try {
-            $res = $this->client->get($uri)->send()->getBody(true);
+            $response = $this->client->get($uri);
         } catch (RequestException $e) {
             throw new RuntimeException(sprintf('Unable to fetch data for %s', $targetEntity), $e->getCode(), $e);
         }
 
-        $data = json_decode($res, true);
+        $data = json_decode((string)$response->getBody(), true);
 
         $collection = new ArrayCollection();
 
